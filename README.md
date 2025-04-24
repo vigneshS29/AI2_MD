@@ -6,6 +6,6 @@ AI²MD (Artificial Intelligence for Ab-Initio Molecular Dynamics) is a hybrid fr
 
 🔍 2. Real-Time Chemical Analysis
 	•	Automatically extract molecular species from XYZ trajectories using bonding heuristics based on UFF radii.
-	•	Use depth-first search (DFS) parallelized across frames to cluster atoms into molecular fragments and track their evolution across time.
+	•	Use depth-first search (DFS) or Graph Laplasian parallelized across frames to cluster atoms into molecular fragments and track their evolution across time.
 
 ![Example](./example.png)
