@@ -8,4 +8,4 @@ AI²MD (Artificial Intelligence for Ab-Initio Molecular Dynamics) is a hybrid fr
 	•	Automatically extract molecular species from XYZ trajectories using bonding heuristics based on UFF radii.
 	•	Use depth-first search (DFS) to cluster atoms into molecular fragments and track their evolution across time.
 
-![Example](./example.jpg)
+![Example](./example.png)
