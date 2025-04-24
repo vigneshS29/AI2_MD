@@ -3,8 +3,11 @@ from collections import defaultdict, Counter
 import numpy as np
 from ase.io import read
 import matplotlib.pyplot as plt
+from multiprocessing import Pool, cpu_count
+from scipy.sparse import csr_matrix
+from scipy.sparse.csgraph import connected_components
 
-# --- UFF Bond Radii Dictionary ---                                                                                                                                                                                                                                                                                                                                                                                                          
+# --- UFF Bond Radii Dictionary ---
 UFF_RADII = {
     'H': 0.354, 'He': 0.849, 'Li': 1.336, 'Be': 1.074, 'B': 0.838, 'C': 0.757, 'N': 0.700,
     'O': 0.658, 'F': 0.668, 'Ne': 0.920, 'Na': 1.539, 'Mg': 1.421, 'Al': 1.244, 'Si': 1.117,
@@ -37,51 +40,67 @@ def get_bonds(atoms, tolerance=0.4):
                 bonds.append((i, j))
     return bonds
 
-def get_molecule_clusters(atoms, bonds):
-    graph = defaultdict(list)
-    for i, j in bonds:
-        graph[i].append(j)
-        graph[j].append(i)
+def get_molecule_clusters(atoms, bonds, method="laplacian"):
+    n = len(atoms)
+    if method == "laplacian":
+        row, col = zip(*bonds) if bonds else ([], [])
+        data = [1] * len(row)
+        adj = csr_matrix((data + data, (list(row) + list(col), list(col) + list(row))), shape=(n, n))
+        n_components, labels = connected_components(adj)
+        mols = [[] for _ in range(n_components)]
+        for i, label in enumerate(labels):
+            mols[label].append(i)
+        return [atoms[indices] for indices in mols]
+    else:  # DFS fallback
+        graph = defaultdict(list)
+        for i, j in bonds:
+            graph[i].append(j)
+            graph[j].append(i)
 
-    visited = set()
-    molecules = []
+        visited = set()
+        molecules = []
 
-    def dfs(node, group):
-        visited.add(node)
-        group.append(node)
-        for neighbor in graph[node]:
-            if neighbor not in visited:
-                dfs(neighbor, group)
+        def dfs(node, group):
+            visited.add(node)
+            group.append(node)
+            for neighbor in graph[node]:
+                if neighbor not in visited:
+                    dfs(neighbor, group)
 
-    for i in range(len(atoms)):
-        if i not in visited:
-            group = []
-            dfs(i, group)
-            molecules.append(atoms[group])
-
-    return molecules
+        for i in range(len(atoms)):
+            if i not in visited:
+                group = []
+                dfs(i, group)
+                molecules.append(atoms[group])
+        return molecules
 
 def get_formula(mol):
     symbols = sorted(mol.get_chemical_symbols())
     return ''.join(f"{el}{symbols.count(el)}" for el in sorted(set(symbols)))
 
-def compute_species_fractions(xyz_file, tolerance=0.4, timestep_fs=1.0):
+def process_frame(args):
+    i, atoms, tolerance, method = args
+    bonds = get_bonds(atoms, tolerance)
+    mols = get_molecule_clusters(atoms, bonds, method=method)
+    counts = Counter(get_formula(mol) for mol in mols)
+    return (i, counts)
+
+def compute_species_fractions(xyz_file, tolerance=0.4, timestep_fs=1.0, method="laplacian"):
     frames = read(xyz_file, index=":")
+    with Pool() as pool:
+        results = pool.map(process_frame, [(i, frame, tolerance, method) for i, frame in enumerate(frames)])
+
     species_set = set()
     fractions_list = []
     time_axis = []
 
-    for i, atoms in enumerate(frames):
-        bonds = get_bonds(atoms, tolerance)
-        mols = get_molecule_clusters(atoms, bonds)
-        counts = Counter(get_formula(mol) for mol in mols)
+    for i, counts in sorted(results):
         total = sum(counts.values())
         fractions = {k: v / total for k, v in counts.items()}
         species_set.update(fractions.keys())
         fractions_list.append(fractions)
-        time_axis.append(i * timestep_fs * 1e-3)  # fs to ps                                                                                                                                                                                                                                                                                                                                                                                 
+        time_axis.append(i * timestep_fs * 1e-3)
 
-        # Print frame information                                                                                                                                                                                                                                                                                                                                                                                                            
         print(f"\nFrame {i} (Time {time_axis[-1]:.2f} ps):")
         for species, count in counts.items():
             print(f"  {species}: {count}")
@@ -107,13 +126,13 @@ def main():
     parser.add_argument("--timestep", type=float, default=1.0, help="Time per frame in fs")
     parser.add_argument("--tolerance", type=float, default=0.4, help="Bond tolerance (Å)")
     parser.add_argument("--output", default="result.png", help="Output plot file name")
+    parser.add_argument("--method", choices=["laplacian", "dfs"], default="laplacian", help="Clustering method")
     args = parser.parse_args()
 
     time_axis, fractions, species = compute_species_fractions(
-        args.xyz, tolerance=args.tolerance, timestep_fs=args.timestep
+        args.xyz, tolerance=args.tolerance, timestep_fs=args.timestep, method=args.method
     )
     plot_species_fractions(time_axis, fractions, species, output=args.output)
 
 if __name__ == "__main__":
     main()
-
