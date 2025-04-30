@@ -9,3 +9,4 @@ AI²MD (Artificial Intelligence for Ab-Initio Molecular Dynamics) is a hybrid fr
 	•	Use depth-first search (DFS) or Graph Laplasian parallelized across frames to cluster atoms into molecular fragments and track their evolution across time.
 
 ![Example](./example.png)
+[Watch the demo video](videos/demo.mp4)
