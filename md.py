@@ -12,6 +12,7 @@ from ase.md import MDLogger
 
 from orb_models.forcefield import pretrained
 from orb_models.forcefield.calculator import ORBCalculator
+from mace.calculators import mace_off
 
 
 def setup_device():
@@ -43,29 +44,41 @@ def prepare_output_paths(input_file, output_dir, suffix):
 
 def run_md(atoms, xyz_path, log_path, temperature_K, timestep, friction, steps, traj_interval, log_interval):
     dyn = Langevin(atoms, timestep, temperature_K=temperature_K, friction=friction)
-    dyn.attach(lambda: write(xyz_path, atoms, append=True), interval=traj_interval)
+    dyn.attach(lambda: write(xyz_path, atoms.copy().wrap(), append=True), interval=traj_interval)
     dyn.attach(MDLogger(dyn, atoms, log_path), interval=log_interval)
     dyn.run(steps)
+
+
+def get_calculator(model_type, device):
+    if model_type == "orb":
+        print("[INFO] Using ORBNet model")
+        return ORBCalculator(pretrained.orb_d3_v2(), device=device)
+    elif model_type == "mace":
+        print("[INFO] Using MACE model: EGRET_1.model")
+        return mace_off(model="compiled_models/EGRET_1.model", default_dtype="float64")
+    else:
+        raise ValueError(f"Unknown model_type: {model_type}")
 
 
 def run_md_simulation(
     input_file,
     output_dir,
+    model_type="orb",
     suffix="",
     cell_size=30.00,
     temperature_K=500,
     timestep=0.5 * units.fs,
     friction=0.01 / units.fs,
     equil_steps=1,
-    prod_steps=100000000,
+    prod_steps=1000000,
     traj_interval=20,
     log_interval=1
 ):
     device = setup_device()
 
-    # --- Equilibration ---                                                                                                                                                                                                                                                                                                                                                                                                                  
+    # --- Equilibration ---
     atoms = initialize_atoms(input_file, cell_size)
-    atoms.calc = ORBCalculator(pretrained.orb_d3_v2(), device=device)
+    atoms.calc = get_calculator(model_type, device)
     MaxwellBoltzmannDistribution(atoms, temperature_K=temperature_K)
 
     eq_xyz, eq_log = prepare_output_paths(input_file, output_dir, f"{suffix}_equil")
@@ -79,15 +92,15 @@ def run_md_simulation(
     )
     print("[INFO] Equilibration completed.")
 
-    # --- Save last equil frame ---                                                                                                                                                                                                                                                                                                                                                                                                          
+    # --- Save last equil frame ---
     last_equil_frame = read(eq_xyz, index=-1)
     last_equil_path = os.path.join(output_dir, f"{suffix}_last_equil_frame.xyz")
     write(last_equil_path, last_equil_frame)
     print(f"[INFO] Last equilibration frame saved to: {last_equil_path}")
 
-    # --- Production ---                                                                                                                                                                                                                                                                                                                                                                                                                     
+    # --- Production ---
     atoms = initialize_atoms(last_equil_path, cell_size)
-    atoms.calc = ORBCalculator(pretrained.orb_d3_v2(), device=device)
+    atoms.calc = get_calculator(model_type, device)
 
     prod_xyz, prod_log = prepare_output_paths(input_file, output_dir, f"{suffix}_prod")
     print(f"[INFO] Starting production MD: {last_equil_path} -> {prod_xyz}")
@@ -102,9 +115,10 @@ def run_md_simulation(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Run equilibration and production MD with ORB.")
+    parser = argparse.ArgumentParser(description="Run equilibration and production MD with ORB or MACE.")
     parser.add_argument("input_file", help="Input XYZ file")
     parser.add_argument("output_dir", help="Directory to store output files")
+    parser.add_argument("--model_type", choices=["orb", "mace"], default="orb", help="Choose force field model")
     parser.add_argument("--suffix", default="", help="Optional identifier for output files")
     parser.add_argument("--equil_steps", type=int, default=20, help="Equilibration steps")
     parser.add_argument("--prod_steps", type=int, default=1000000, help="Production steps")
@@ -114,6 +128,7 @@ def main():
     run_md_simulation(
         input_file=args.input_file,
         output_dir=args.output_dir,
+        model_type=args.model_type,
         suffix=args.suffix,
         equil_steps=args.equil_steps,
         prod_steps=args.prod_steps
